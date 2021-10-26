@@ -193,7 +193,7 @@ def lambda_handler(event, context):
     print("Connected to keyspaces")
     for row in csv_reader:
         row_count += 1
-        if row_count % 1000 == 0:
+        if row_count % 5000 == 0:
             print("Processed %d rows so far" % row_count)
 
         ## process and do work
