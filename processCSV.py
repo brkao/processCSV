@@ -12,6 +12,8 @@ import botocore.response
 
 from cassandra.cluster import Cluster
 from cassandra.auth import PlainTextAuthProvider
+from cassandra  import policies
+from cassandra import query
 from ssl import SSLContext, PROTOCOL_TLSv1_2 , CERT_REQUIRED
 
 MINIMUN_REMAINING_TIME_MS   = 10000
@@ -71,28 +73,80 @@ columns = ["\"ticker\"",
 	"\"expiryTod\"",
 ]
 
+column_types = ["'%s'",#ticker
+     "'%s'",#tradeDate
+     "'%s'",#expirDate
+     "%s",  #dte
+     "%s",  #strike
+     "%s",  #stockPrice
+     "%s",  #callVolume
+     "%s",  #callOpenInterest
+     "%s",  #callBidSize
+     "%s",  #callAskSize
+     "%s",  #putVolume
+     "%s",  #putOpenInterest
+     "%s",  #putBidSize
+     "%s",  #putAskSize
+     "%s",  #callBidPrice
+     "%s",  #callValue
+     "%s",  #callAskPrice
+     "%s",  #putBidPrice
+     "%s",  #putValue
+     "%s",  #putAskPrice
+     "%s",  #callBidIv
+     "%s",  #callMidIv
+     "%s",  #callAskIv
+     "%s",  #smvVol
+     "%s",  #putBidIv
+     "%s",  #putMidIv
+     "%s",  #putAskIv
+     "%s",  #residualRate
+     "%s",  #delta
+     "%s",  #gamma
+     "%s",  #theta
+     "%s",  #vega
+     "%s",  #rho
+     "%s",  #phi
+     "%s",  #driftlessTheta
+     "%s",  #callSmvVol
+     "%s",  #putSmvVol
+     "%s",  #extSmvVol
+     "%s",  #extCallValue
+     "%s",  #extPutValue
+     "%s",  #spotPrice
+     "'%s'",#quoteDate
+     "'%s'",#updatedAt
+     "'%s'",#snapShotEstTime
+     "'%s'",#snapShotDate
+     "'%s'",#expiryTod
+]
+
+
 def build_query():
+    insert_query = ""
     insert_query = insert_query + "INSERT INTO " + KEYSPACES_NAME + "." + KEYSPACES_TABLE
     insert_query = insert_query + " ("
-    for c in range(columns) :
+    for c in columns :
     	insert_query = insert_query + c + ", "
 
     insert_query = insert_query[:len(insert_query)-2]
     insert_query = insert_query + ")" + " values ("
-    for i in range(len(columnsTypes)) :
-        insert_query = insert_query + '?' + ", "
-        
+    for c in column_types :
+        insert_query = insert_query + c + ", "
+
     insert_query = insert_query[:len(insert_query)-2]
     insert_query = insert_query + ")"
+    return insert_query
 
 def lambda_handler(event, context):
     print(event)
-    
+    prepared_query = build_query()
+
     print("Downloading ", KEYSPACES_CERT_URL)
     urllib.request.urlretrieve(KEYSPACES_CERT_URL, KEYSPACES_CERT_PATH)
     keyspaces_user = os.environ.get('KEYSPACES_USER')
     keyspaces_pass = os.environ.get('KEYSPACES_PASS')
-    
+
     records = [x for x in event.get('Records', [])]
     sorted_events = sorted(records, key=lambda e: e.get('eventTime'))
     latest_event = sorted_events[-1] if sorted_events else {}
@@ -111,52 +165,52 @@ def lambda_handler(event, context):
     session = boto3.Session(
         aws_access_key_id=access_key,
         aws_secret_access_key=secret_key)
-    
+
     print("Accessing S3 bucket", bucket_name, object_key)
     s3_resource = session.resource('s3')
     s3_object = s3_resource.Object(bucket_name=bucket_name, key=object_key)
     bodylines = get_object_bodylines(s3_object, offset)
-    csv_reader = csv.DictReader(bodylines.iter_lines(), fieldnames=fieldnames)
-    test = 1
+    csv_reader = csv.reader(bodylines.iter_lines())
+    fieldnames = next(csv_reader)
     for row in csv_reader:
         row_count += 1
-        
-        if test == 1:
-            print("First Row:", row)
-            test += 1
-            
+
         ## process and do work
-        
         ssl_context = SSLContext(PROTOCOL_TLSv1_2 )
         ssl_context.load_verify_locations(KEYSPACES_CERT_PATH)
         ssl_context.verify_mode = CERT_REQUIRED
         auth_provider = PlainTextAuthProvider(username=keyspaces_user, password=keyspaces_pass)
-        cluster = Cluster([KEYSPACES_HOST], ssl_context=ssl_context, auth_provider=auth_provider, port=KEYSPACES_HOST)
+        cluster = Cluster([KEYSPACES_HOST],
+            ssl_context=ssl_context, protocol_version=3,
+            auth_provider=auth_provider, port=KEYSPACES_PORT,
+            load_balancing_policy=policies.RoundRobinPolicy())
         session = cluster.connect()
-        return
+        session.default_consistency_level = query.ConsistencyLevel.LOCAL_QUORUM
+        q = prepared_query % tuple(row)
+        results = session.execute(q)
         ## end work
-        
-        
+
         if context.get_remaining_time_in_millis() < MINIMUN_REMAINING_TIME_MS:
             fieldnames = fieldnames or csv_reader.fieldnames
-            print("Last Row:", row)
             break
 
     print("Processed %d rows" % row_count)
-    
+
     new_offset = offset + bodylines.offset
     if new_offset < s3_object.content_length:
         print("Invoke next call with offset ", new_offset)
-#        new_event = {
-#            **event,
-#            "offset": new_offset,
-#            "fieldnames": fieldnames,
-#            "row_count": row_count
-#        }
-#        invoke_lambda(context.function_name, new_event)
+        new_event = {
+            **event,
+            "offset": new_offset,
+            "fieldnames": fieldnames,
+            "row_count": row_count
+        }
+        invoke_lambda(context.function_name, new_event)
     else:
         print("All done processing", bucket_name, object_key)
         print("Total Rows: ", row_count)
+        s3.Object('your-bucket', 'object_key').delete()
+        print(object_key, "Deleted")
     return
 
 
@@ -166,10 +220,10 @@ def invoke_lambda(function_name, event):
     session = boto3.Session(
         aws_access_key_id=access_key,
         aws_secret_access_key=secret_key)
-        
+
     client = session.client('lambda')
     payload = json.dumps(event).encode('utf-8')
-    
+
     response = client.invoke(
         FunctionName=function_name,
         InvocationType='Event',
@@ -178,7 +232,7 @@ def invoke_lambda(function_name, event):
 
 
 def get_object_bodylines(s3_object, offset):
-#    resp = s3_object.get(Range=f'bytes={offset}-')
+    resp = s3_object.get(Range=f'bytes={offset}-')
     body: botocore.response.StreamingBody = resp['Body']
     return BodyLines(body)
 
