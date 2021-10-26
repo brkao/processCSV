@@ -152,6 +152,10 @@ def lambda_handler(event, context):
     latest_event = sorted_events[-1] if sorted_events else {}
     info = latest_event.get('s3', {})
     object_key = info.get('object', {}).get('key')
+    if not object_key.endswith('.csv'):
+        print("Not a CSV file", object_key)
+        return
+
     bucket_name = info.get('bucket', {}).get('name')
     offset = event.get('offset', 0)
     row_count = event.get('row_count', 0)
