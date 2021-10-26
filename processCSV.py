@@ -171,7 +171,12 @@ def lambda_handler(event, context):
     s3_object = s3_resource.Object(bucket_name=bucket_name, key=object_key)
     bodylines = get_object_bodylines(s3_object, offset)
     csv_reader = csv.reader(bodylines.iter_lines())
-    fieldnames = next(csv_reader)
+
+    if fieldnames == None:
+        fieldnames = next(csv_reader)
+        print("Fieldnames not available, using CSV header", fieldnames)
+    else:
+        print("Fieldnames", fieldnames)
 
     print("Connecting to keyspaces")
     ssl_context = SSLContext(PROTOCOL_TLSv1_2 )
@@ -181,12 +186,15 @@ def lambda_handler(event, context):
     cluster = Cluster([KEYSPACES_HOST],
         ssl_context=ssl_context, protocol_version=3,
         auth_provider=auth_provider, port=KEYSPACES_PORT,
-        load_balancing_policy=None)
+        load_balancing_policy=policies.RoundRobinPolicy())
     session = cluster.connect()
     session.default_consistency_level = query.ConsistencyLevel.LOCAL_QUORUM
 
+    print("Connected to keyspaces")
     for row in csv_reader:
         row_count += 1
+        if row_count % 1000 == 0:
+            print("Processed %d rows so far", row_count)
 
         ## process and do work
         q = prepared_query % tuple(row)
@@ -194,7 +202,7 @@ def lambda_handler(event, context):
         ## end work
 
         if context.get_remaining_time_in_millis() < MINIMUN_REMAINING_TIME_MS:
-            fieldnames = fieldnames or csv_reader.fieldnames
+            print("Out of time, breaking")
             break
 
     print("Processed %d rows" % row_count)
