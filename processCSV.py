@@ -172,20 +172,23 @@ def lambda_handler(event, context):
     bodylines = get_object_bodylines(s3_object, offset)
     csv_reader = csv.reader(bodylines.iter_lines())
     fieldnames = next(csv_reader)
+
+    print("Connecting to keyspaces")
+    ssl_context = SSLContext(PROTOCOL_TLSv1_2 )
+    ssl_context.load_verify_locations(KEYSPACES_CERT_PATH)
+    ssl_context.verify_mode = CERT_REQUIRED
+    auth_provider = PlainTextAuthProvider(username=keyspaces_user, password=keyspaces_pass)
+    cluster = Cluster([KEYSPACES_HOST],
+        ssl_context=ssl_context, protocol_version=3,
+        auth_provider=auth_provider, port=KEYSPACES_PORT,
+        load_balancing_policy=None)
+    session = cluster.connect()
+    session.default_consistency_level = query.ConsistencyLevel.LOCAL_QUORUM
+
     for row in csv_reader:
         row_count += 1
 
         ## process and do work
-        ssl_context = SSLContext(PROTOCOL_TLSv1_2 )
-        ssl_context.load_verify_locations(KEYSPACES_CERT_PATH)
-        ssl_context.verify_mode = CERT_REQUIRED
-        auth_provider = PlainTextAuthProvider(username=keyspaces_user, password=keyspaces_pass)
-        cluster = Cluster([KEYSPACES_HOST],
-            ssl_context=ssl_context, protocol_version=3,
-            auth_provider=auth_provider, port=KEYSPACES_PORT,
-            load_balancing_policy=policies.RoundRobinPolicy())
-        session = cluster.connect()
-        session.default_consistency_level = query.ConsistencyLevel.LOCAL_QUORUM
         q = prepared_query % tuple(row)
         results = session.execute(q)
         ## end work
