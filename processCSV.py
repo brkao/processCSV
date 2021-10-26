@@ -194,7 +194,7 @@ def lambda_handler(event, context):
     for row in csv_reader:
         row_count += 1
         if row_count % 1000 == 0:
-            print("Processed %d rows so far", row_count)
+            print("Processed %d rows so far" % row_count)
 
         ## process and do work
         q = prepared_query % tuple(row)
