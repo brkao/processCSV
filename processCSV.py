@@ -1,6 +1,3 @@
-## Accompanying code for - Processing large S3 files with AWS Lambda
-## https://medium.com/swlh/processing-large-s3-files-with-aws-lambda-2c5840ae5c91
-
 import urllib.request
 import csv
 import json
